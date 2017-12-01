@@ -6,6 +6,7 @@
 
 extern crate num;
 extern crate byteorder;
+extern crate encoding;
 
 use std::string::String;
 use std::vec::Vec;
@@ -18,6 +19,9 @@ use num::FromPrimitive;
 use num::bigint;
 use std::num::ParseFloatError;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+
+use encoding::{Encoding, DecoderTrap};
+use encoding::all::ISO_8859_1;
 
 
 #[derive(Debug, PartialEq)]
@@ -226,6 +230,14 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
         try!(self.rdr.take(len as u64).read_to_string(&mut str_buf));
         Ok(str_buf)
     }
+    fn _read_latin1_str(&mut self, len: usize) -> io::Result<String> {
+        let bs : Vec<u8> = try!(self.rdr.take(len as u64).bytes().collect());
+        let str = match ISO_8859_1.decode(&bs, DecoderTrap::Strict) {
+            Ok(str) => str,
+            Err(e) => panic!("Panic on decoding ISO_8859_1 {:?}", e),
+        };
+        Ok(str)
+    }
     fn decode_float(&mut self) -> DecodeResult {
         let float_str = try!(self._read_str(31));
         let num = try!(float_str.parse::<f32>());
@@ -233,16 +245,21 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
     }
     fn _decode_any_atom(&mut self) -> DecodeResult {
         match try!(self._decode_tag()) {
-            ErlTermTag::ATOM_EXT | ErlTermTag::ATOM_UTF8_EXT => self.decode_atom(),
+            ErlTermTag::ATOM_EXT => self.decode_latin1_atom(),
+            ErlTermTag::ATOM_UTF8_EXT => self.decode_utf8_atom(),
             ErlTermTag::SMALL_ATOM_EXT | ErlTermTag::SMALL_ATOM_UTF8_EXT => self.decode_small_atom(),
             tag =>
                 Err(Error::UnexpectedTerm(tag))
         }
     }
-    fn decode_atom(&mut self) -> DecodeResult {
+    fn decode_latin1_atom(&mut self) -> DecodeResult {
+        let len = try!(self.rdr.read_u16::<BigEndian>());
+        let atom_str = try!(self._read_latin1_str(len as usize));
+        Ok(Eterm::Atom(atom_str))
+    }
+    fn decode_utf8_atom(&mut self) -> DecodeResult {
         let len = try!(self.rdr.read_u16::<BigEndian>());
         let atom_str = try!(self._read_str(len as usize));
-        // XXX: data is in latin1 in case of ATOM_EXT
         Ok(Eterm::Atom(atom_str))
     }
     fn decode_reference(&mut self) -> DecodeResult {
@@ -511,7 +528,8 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
             ErlTermTag::SMALL_INTEGER_EXT => self.decode_small_integer(),
             ErlTermTag::INTEGER_EXT => self.decode_integer(),
             ErlTermTag::FLOAT_EXT => self.decode_float(),
-            ErlTermTag::ATOM_EXT | ErlTermTag::ATOM_UTF8_EXT => self.decode_atom(),
+            ErlTermTag::ATOM_EXT => self.decode_latin1_atom(),
+            ErlTermTag::ATOM_UTF8_EXT => self.decode_utf8_atom(),
             ErlTermTag::REFERENCE_EXT => self.decode_reference(),
             ErlTermTag::PORT_EXT => self.decode_port(),
             ErlTermTag::PID_EXT => self.decode_pid(),

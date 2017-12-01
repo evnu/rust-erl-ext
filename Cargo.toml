@@ -20,6 +20,7 @@ name = "erl_ext"
 
 num = ">=0.1.25"
 byteorder = ">=0.5.1"
+encoding = ">=0.2"
 
 [dev-dependencies]
 
